@@ -63,16 +63,14 @@ Key training parameters:
 
 ---
 
-## 🏗️ Project Structure
+## Project Structure
 
 ├── pretrained_models_updated.ipynb
 ├── splits_final/
-├── model_outputs_updated/
-│ ├── resnet50/
-│ ├── logs/
-│ └── all_model_results.csv
-
-
+└── model_outputs_updated/
+    ├── resnet50/
+    ├── logs/
+    └── all_model_results.csv
 ---
 
 ## Pipeline
