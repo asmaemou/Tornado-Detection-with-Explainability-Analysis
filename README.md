@@ -28,6 +28,12 @@ The framework supports several pretrained models from `torchvision`, including:
 - VGG16
 
 ---
+## Dataset
+
+The dataset used in this project is hosted externally due to its size.
+
+Download it from Google Drive:  
+https://drive.google.com/drive/folders/1Dg2QwlYnnw2rFyT2v4JqSZK18V__TwAD
 
 ## Dataset Structure
 
