@@ -1,5 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=tornado_aug
+#SBATCH -p wsu_soc_kshirsagar.q
 #SBATCH --output=/homes/j244s673/documents/wsu/phd/tornado_data/tornado_aug_%j.out
 #SBATCH --error=/homes/j244s673/documents/wsu/phd/tornado_data/tornado_aug_%j.err
 #SBATCH --time=02:00:00
