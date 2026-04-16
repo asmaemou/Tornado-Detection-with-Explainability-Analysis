@@ -116,8 +116,8 @@ model_outputs_updated/all_model_results.csv
 
 Models are compared based on:
 
-Test F1 Score
-ROC-AUC
+- Test F1 Score
+- ROC-AUC
 
 ### How to Run:
 
