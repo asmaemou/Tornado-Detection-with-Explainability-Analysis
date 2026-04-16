@@ -1,8 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=tornado_aug
-#SBATCH -p wsu_soc_kshirsagar.q
-#SBATCH --output=/homes/j244s673/documents/wsu/phd/tornado_data/tornado_aug_%j.out
-#SBATCH --error=/homes/j244s673/documents/wsu/phd/tornado_data/tornado_aug_%j.err
+#SBATCH --output=logs/%x_%j.out
+#SBATCH --error=logs/%x_%j.err
 #SBATCH --time=02:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
@@ -18,8 +17,5 @@ conda activate tornado_aug
 export INPUT_DIR="/homes/j244s673/documents/wsu/phd/tornado_data/tornado"
 export OUTPUT_DIR="/homes/j244s673/documents/wsu/phd/tornado_data/augmented_tornadoes"
 
-# Go to working directory
-cd /homes/j244s673/documents/wsu/phd/tornado_data
-
-# Run script
-python augment_tornadoes.py
+# Run the script from its actual location
+python /homes/j244s673/Tornado-Detection-with-Explainability-Analysis/augment_tornadoes.py
