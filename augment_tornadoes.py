@@ -8,15 +8,9 @@ import albumentations as A
 # ----------------------------
 # Configuration
 # ----------------------------
-INPUT_DIR = os.environ.get(
-    "INPUT_DIR",
-    "/homes/j244s673/documents/wsu/phd/tornado_data/tornado"
-)
-OUTPUT_DIR = os.environ.get(
-    "OUTPUT_DIR",
-    "/homes/j244s673/documents/wsu/phd/tornado_data/augmented_tornadoes"
-)
-AUGS_PER_IMAGE = 100
+INPUT_DIR = "/homes/j244s673/documents/wsu/phd/tornado/train"
+OUTPUT_DIR = "/homes/j244s673/documents/wsu/phd/tornado/train_augmented"
+AUGS_PER_IMAGE = 26
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 
@@ -24,49 +18,58 @@ IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 # Augmentation pipeline
 # ----------------------------
 transform = A.Compose([
-    A.RandomResizedCrop(
-        size=(256, 256),
-        scale=(0.8, 1.0),
-        ratio=(0.9, 1.1),
-        p=0.5
-    ),
+    # Horizontal flip is safe for tornado scenes
     A.HorizontalFlip(p=0.5),
-    A.Rotate(limit=10, border_mode=cv2.BORDER_REFLECT_101, p=0.4),
-    A.RandomBrightnessContrast(
-        brightness_limit=0.2,
-        contrast_limit=0.2,
-        p=0.5
-    ),
-    A.HueSaturationValue(
-        hue_shift_limit=10,
-        sat_shift_limit=15,
-        val_shift_limit=10,
+
+    # Keep rotations small so the horizon still looks natural
+    A.Rotate(
+        limit=5,
+        border_mode=cv2.BORDER_REFLECT_101,
         p=0.3
     ),
+
+    # Mild brightness / contrast changes
+    A.RandomBrightnessContrast(
+        brightness_limit=0.15,
+        contrast_limit=0.15,
+        p=0.4
+    ),
+
+    # Mild color variation
+    A.HueSaturationValue(
+        hue_shift_limit=6,
+        sat_shift_limit=10,
+        val_shift_limit=8,
+        p=0.25
+    ),
+
+    # Mild blur
     A.OneOf([
         A.GaussianBlur(blur_limit=(3, 5), p=1.0),
-        A.MotionBlur(blur_limit=5, p=1.0),
-    ], p=0.3),
-    A.GaussNoise(p=0.3),
+        A.MotionBlur(blur_limit=3, p=1.0),
+    ], p=0.2),
+
+    # Mild noise
+    A.GaussNoise(p=0.2),
+
+    # Mild weather effects
     A.OneOf([
-        A.RandomFog(fog_coef_range=(0.1, 0.3), alpha_coef=0.08, p=1.0),
-        A.RandomRain(
-            slant_range=(-10, 10),
-            drop_length=10,
-            drop_width=1,
-            drop_color=(200, 200, 200),
-            blur_value=3,
-            brightness_coefficient=0.9,
+        A.RandomFog(
+            fog_coef_range=(0.05, 0.15),
+            alpha_coef=0.05,
             p=1.0
         ),
-    ], p=0.2),
-    A.CoarseDropout(
-        num_holes_range=(1, 5),
-        hole_height_range=(10, 30),
-        hole_width_range=(10, 30),
-        fill=0,
-        p=0.2
-    ),
+        A.RandomRain(
+            slant_range=(-5, 5),
+            drop_length=8,
+            drop_width=1,
+            blur_value=3,
+            brightness_coefficient=0.95,
+            p=1.0
+        ),
+    ], p=0.1),
+
+    # Final resize
     A.Resize(256, 256)
 ])
 

@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH -p wsu_soc_kshirsagar.q
 #SBATCH --job-name=tornado_aug
-#SBATCH --output=logs/%x_%j.out
-#SBATCH --error=logs/%x_%j.err
+#SBATCH --output=/homes/j244s673/Tornado-Detection-with-Explainability-Analysis/logs/%x_%j.out
+#SBATCH --error=/homes/j244s673/Tornado-Detection-with-Explainability-Analysis/logs/%x_%j.err
 #SBATCH --time=02:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
@@ -17,12 +17,12 @@ cd "$SLURM_SUBMIT_DIR"
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate tornado_aug
 
-# Paths
-export INPUT_DIR="/homes/j244s673/documents/wsu/phd/tornado_data/tornado"
-export OUTPUT_DIR="/homes/j244s673/documents/wsu/phd/tornado_data/augmented_tornadoes"
+# Paths for your current train split
+export INPUT_DIR="/homes/j244s673/documents/wsu/phd/tornado/train"
+export OUTPUT_DIR="/homes/j244s673/documents/wsu/phd/tornado/train_augmented"
 
-# Make sure logs dir exists
-mkdir -p logs
+# Make sure output dir exists
+mkdir -p "$OUTPUT_DIR"
 
 # Run script from the submit directory
 python augment_tornadoes.py
