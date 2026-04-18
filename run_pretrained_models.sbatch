@@ -1,16 +1,17 @@
 #!/bin/bash
 #SBATCH -p wsu_soc_kshirsagar.q
-#SBATCH --job-name=pretrained_py
+#SBATCH --job-name=pretrained_grid
 #SBATCH --output=logs/%x_%j.out
 #SBATCH --error=logs/%x_%j.err
-#SBATCH --time=24:00:00
+#SBATCH --time=72:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=32G
+#SBATCH --mem=48G
 
-# Uncomment one if your cluster needs a GPU request
-# #SBATCH --gres=gpu:1
-# #SBATCH --gpus=1
+# Use the correct GPU directive for your cluster
+#SBATCH --gres=gpu:1
+# or, if your cluster uses this form instead:
+# SBATCH --gpus=1
 
 set -euo pipefail
 
@@ -21,5 +22,6 @@ conda activate tornado_aug
 
 which python
 python --version
+nvidia-smi || true
 
 python pretrained_models_new.py
