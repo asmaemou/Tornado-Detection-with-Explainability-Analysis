@@ -45,7 +45,7 @@ BASE_OUTPUT_DIR = "/homes/j244s673/documents/wsu/phd/Tornado-Detection-with-Expl
 
 # Fixed settings
 NUM_WORKERS = 0
-PATIENCE = 5
+PATIENCE = 3
 THRESHOLD = 0.5
 SEED = 42
 
@@ -66,7 +66,7 @@ SELECTED_MODELS = [
 SEARCH_SPACE = {
     "IMAGE_SIZE": [224, 256],
     "BATCH_SIZE": [16, 32],
-    "EPOCHS": [40],
+    "EPOCHS": [20],
     "LR": [1e-4, 3e-4],
     "WEIGHT_DECAY": [1e-4, 1e-5],
 }
