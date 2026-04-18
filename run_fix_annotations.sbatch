@@ -15,7 +15,4 @@ cd "$SLURM_SUBMIT_DIR"
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate tornado_aug
 
-which python
-python --version
-
 python fix_annotations_hpc.py
