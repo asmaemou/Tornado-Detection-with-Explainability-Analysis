@@ -24,4 +24,4 @@ which python
 python --version
 nvidia-smi || true
 
-python pretrained_models_new.py
+python -u pretrained_models_new.py
