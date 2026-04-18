@@ -4,10 +4,14 @@ import json
 import time
 import random
 import warnings
+import itertools
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from PIL import Image
@@ -33,38 +37,48 @@ warnings.filterwarnings("ignore")
 # =========================================================
 # CONFIGURATION
 # =========================================================
-TRAIN_CSV = "homes/j244s673/documents/wsu/phd/Tornado-Detection-with-Explainability-Analysis/dataset_updated/annotations/train.csv"
-VAL_CSV   = "homes/j244s673/documents/wsu/phd/Tornado-Detection-with-Explainability-Analysis/dataset_updated/annotations/val.csv"
-TEST_CSV  = "homes/j244s673/documents/wsu/phd/Tornado-Detection-with-Explainability-Analysis/dataset_updated/annotations/test.csv"
+TRAIN_CSV = "/homes/j244s673/documents/wsu/phd/Tornado-Detection-with-Explainability-Analysis/dataset_updated/annotations/train.csv"
+VAL_CSV   = "/homes/j244s673/documents/wsu/phd/Tornado-Detection-with-Explainability-Analysis/dataset_updated/annotations/val.csv"
+TEST_CSV  = "/homes/j244s673/documents/wsu/phd/Tornado-Detection-with-Explainability-Analysis/dataset_updated/annotations/test.csv"
 
-BASE_OUTPUT_DIR = "model_outputs_binary_only"
+BASE_OUTPUT_DIR = "/homes/j244s673/documents/wsu/phd/Tornado-Detection-with-Explainability-Analysis/output"
 
-IMAGE_SIZE = 224
-BATCH_SIZE = 32
+# Fixed settings
 NUM_WORKERS = 0
-EPOCHS = 70
-PATIENCE = 10
-LR = 1e-4
-WEIGHT_DECAY = 1e-4
+PATIENCE = 5
 THRESHOLD = 0.5
 SEED = 42
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-MODEL_LIST = [
-    # "resnet50",
-    # "resnet101",
-    # "densenet121",
-    # "efficientnet_b0",
+# Models to run
+SELECTED_MODELS = [
     "efficientnet_b3",
     "mobilenet_v3_large",
     "convnext_tiny",
     "vgg16",
 ]
 
-# Choose models here
-# SELECTED_MODELS = ["resnet50"]
-SELECTED_MODELS = MODEL_LIST
+# ---------------------------------------------------------
+# SEARCH SPACE
+# ---------------------------------------------------------
+# First-pass grid: manageable
+SEARCH_SPACE = {
+    "IMAGE_SIZE": [224, 256],
+    "BATCH_SIZE": [16, 32],
+    "EPOCHS": [40],
+    "LR": [1e-4, 3e-4],
+    "WEIGHT_DECAY": [1e-4, 1e-5],
+}
+
+# If you want a bigger search later, expand carefully:
+# SEARCH_SPACE = {
+#     "IMAGE_SIZE": [224, 256],
+#     "BATCH_SIZE": [16, 32],
+#     "EPOCHS": [40, 70],
+#     "LR": [1e-4, 3e-4],
+#     "WEIGHT_DECAY": [1e-4, 1e-5],
+# }
 
 os.makedirs(BASE_OUTPUT_DIR, exist_ok=True)
 
@@ -75,7 +89,8 @@ def set_seed(seed=42):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 set_seed(SEED)
 torch.backends.cudnn.benchmark = True
@@ -106,68 +121,71 @@ class TornadoBinaryDataset(Dataset):
             "label": label,
             "filepath": img_path
         }
-    
-# =========================================================
-# TRANSFORMS
-# =========================================================
-train_transform = transforms.Compose([
-    transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
-    transforms.RandomHorizontalFlip(p=0.5),
-    transforms.ColorJitter(
-        brightness=0.15,
-        contrast=0.15,
-        saturation=0.10
-    ),
-    transforms.RandomRotation(degrees=5),
-    transforms.ToTensor(),
-])
 
-eval_transform = transforms.Compose([
-    transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
-    transforms.ToTensor(),
-])
+# =========================================================
+# TRANSFORMS / DATALOADERS
+# =========================================================
+def build_transforms(image_size):
+    train_transform = transforms.Compose([
+        transforms.Resize((image_size, image_size)),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.ColorJitter(
+            brightness=0.15,
+            contrast=0.15,
+            saturation=0.10
+        ),
+        transforms.RandomRotation(degrees=5),
+        transforms.ToTensor(),
+    ])
+
+    eval_transform = transforms.Compose([
+        transforms.Resize((image_size, image_size)),
+        transforms.ToTensor(),
+    ])
+
+    return train_transform, eval_transform
+
+
+def build_dataloaders(train_df, val_df, test_df, image_size, batch_size, num_workers):
+    train_transform, eval_transform = build_transforms(image_size)
+
+    train_dataset = TornadoBinaryDataset(train_df, transform=train_transform)
+    val_dataset = TornadoBinaryDataset(val_df, transform=eval_transform)
+    test_dataset = TornadoBinaryDataset(test_df, transform=eval_transform)
+
+    pin_memory = DEVICE == "cuda"
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=pin_memory
+    )
+
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=pin_memory
+    )
+
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=pin_memory
+    )
+
+    return train_loader, val_loader, test_loader
 
 # =========================================================
 # MODEL BUILDER
 # =========================================================
 def build_model(model_name):
-    if model_name == "resnet50":
-        from torchvision.models import resnet50, ResNet50_Weights
-        model = resnet50(weights=ResNet50_Weights.IMAGENET1K_V2)
-        in_features = model.fc.in_features
-        model.fc = nn.Sequential(
-            nn.Dropout(0.5),
-            nn.Linear(in_features, 1)
-        )
-
-    elif model_name == "resnet101":
-        from torchvision.models import resnet101, ResNet101_Weights
-        model = resnet101(weights=ResNet101_Weights.IMAGENET1K_V2)
-        in_features = model.fc.in_features
-        model.fc = nn.Sequential(
-            nn.Dropout(0.5),
-            nn.Linear(in_features, 1)
-        )
-
-    elif model_name == "densenet121":
-        from torchvision.models import densenet121, DenseNet121_Weights
-        model = densenet121(weights=DenseNet121_Weights.IMAGENET1K_V1)
-        in_features = model.classifier.in_features
-        model.classifier = nn.Sequential(
-            nn.Dropout(0.5),
-            nn.Linear(in_features, 1)
-        )
-
-    elif model_name == "efficientnet_b0":
-        from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
-        model = efficientnet_b0(weights=EfficientNet_B0_Weights.IMAGENET1K_V1)
-        in_features = model.classifier[1].in_features
-        model.classifier = nn.Sequential(
-            nn.Dropout(0.5),
-            nn.Linear(in_features, 1)
-        )
-
-    elif model_name == "efficientnet_b3":
+    if model_name == "efficientnet_b3":
         from torchvision.models import efficientnet_b3, EfficientNet_B3_Weights
         model = efficientnet_b3(weights=EfficientNet_B3_Weights.IMAGENET1K_V1)
         in_features = model.classifier[1].in_features
@@ -294,20 +312,15 @@ def evaluate_labeled(model, loader, criterion, device, threshold=0.5):
         "pred_label": y_pred.astype(int)
     })
 
-    # Safety check to avoid stale/wrong notebook state issues
-    precision_check = precision_score(
+    metrics["precision"] = precision_score(
         pred_df["true_label"], pred_df["pred_label"], zero_division=0
     )
-    recall_check = recall_score(
+    metrics["recall"] = recall_score(
         pred_df["true_label"], pred_df["pred_label"], zero_division=0
     )
-    f1_check = f1_score(
+    metrics["f1"] = f1_score(
         pred_df["true_label"], pred_df["pred_label"], zero_division=0
     )
-
-    metrics["precision"] = precision_check
-    metrics["recall"] = recall_check
-    metrics["f1"] = f1_check
 
     return metrics, pred_df
 
@@ -318,7 +331,6 @@ def plot_training_curves(history_df, output_dir, model_name):
     if history_df.empty:
         return
 
-    # 1) Training Loss vs Validation Loss
     plt.figure(figsize=(10, 5))
     plt.plot(history_df["epoch"], history_df["train_loss"], label="Train Loss")
     plt.plot(history_df["epoch"], history_df["val_loss"], label="Validation Loss")
@@ -329,10 +341,8 @@ def plot_training_curves(history_df, output_dir, model_name):
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, "loss_curve.png"), dpi=300, bbox_inches="tight")
-    plt.show()
     plt.close()
 
-    # 2) Training Accuracy vs Validation Accuracy
     plt.figure(figsize=(10, 5))
     plt.plot(history_df["epoch"], history_df["train_acc"], label="Train Accuracy")
     plt.plot(history_df["epoch"], history_df["val_acc"], label="Validation Accuracy")
@@ -343,10 +353,8 @@ def plot_training_curves(history_df, output_dir, model_name):
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, "accuracy_curve.png"), dpi=300, bbox_inches="tight")
-    plt.show()
     plt.close()
 
-    # 3) Training F1 vs Validation F1
     plt.figure(figsize=(10, 5))
     plt.plot(history_df["epoch"], history_df["train_f1"], label="Train F1")
     plt.plot(history_df["epoch"], history_df["val_f1"], label="Validation F1")
@@ -357,10 +365,8 @@ def plot_training_curves(history_df, output_dir, model_name):
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, "f1_curve.png"), dpi=300, bbox_inches="tight")
-    plt.show()
     plt.close()
 
-    # 4) Precision and Recall vs Epoch
     plt.figure(figsize=(10, 5))
     plt.plot(history_df["epoch"], history_df["train_precision"], label="Train Precision")
     plt.plot(history_df["epoch"], history_df["val_precision"], label="Val Precision")
@@ -373,7 +379,6 @@ def plot_training_curves(history_df, output_dir, model_name):
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, "precision_recall_curve.png"), dpi=300, bbox_inches="tight")
-    plt.show()
     plt.close()
 
 
@@ -401,113 +406,49 @@ def plot_confusion_matrix_figure(y_true, y_pred, output_path, class_names=("Non-
     plt.xlabel("Predicted Label")
     plt.tight_layout()
     plt.savefig(output_path, dpi=300, bbox_inches="tight")
-    plt.show()
     plt.close()
 
 # =========================================================
-# LOAD CSVs
+# HELPERS
 # =========================================================
-train_df = pd.read_csv(TRAIN_CSV)
-val_df = pd.read_csv(VAL_CSV)
-test_df = pd.read_csv(TEST_CSV)
-
-print("Using device:", DEVICE)
-print("Train:", len(train_df))
-print("Val:", len(val_df))
-print("Test:", len(test_df))
-
-print("\nTrain label counts:")
-print(train_df["binary_label"].value_counts().sort_index())
-
-print("\nVal label counts:")
-print(val_df["binary_label"].value_counts().sort_index())
-
-print("\nTest label counts:")
-print(test_df["binary_label"].value_counts().sort_index())
-
-train_label_counts = train_df["binary_label"].value_counts().to_dict()
-num_neg = train_label_counts.get(0, 0)
-num_pos = train_label_counts.get(1, 0)
-pos_weight_value = num_neg / num_pos if num_pos > 0 else 1.0
-
-print("\nNegative:", num_neg)
-print("Positive:", num_pos)
-print("pos_weight:", pos_weight_value)
+def make_run_name(cfg):
+    return (
+        f"img{cfg['IMAGE_SIZE']}_"
+        f"bs{cfg['BATCH_SIZE']}_"
+        f"ep{cfg['EPOCHS']}_"
+        f"lr{cfg['LR']}_"
+        f"wd{cfg['WEIGHT_DECAY']}"
+    )
 
 
-# =========================================================
-# DATALOADERS
-# =========================================================
-train_dataset = TornadoBinaryDataset(train_df, transform=train_transform)
-val_dataset = TornadoBinaryDataset(val_df, transform=eval_transform)
-test_dataset = TornadoBinaryDataset(test_df, transform=eval_transform)
-
-train_loader = DataLoader(
-    train_dataset,
-    batch_size=BATCH_SIZE,
-    shuffle=True,
-    num_workers=NUM_WORKERS,
-    pin_memory=True
-)
-
-val_loader = DataLoader(
-    val_dataset,
-    batch_size=BATCH_SIZE,
-    shuffle=False,
-    num_workers=NUM_WORKERS,
-    pin_memory=True
-)
-
-test_loader = DataLoader(
-    test_dataset,
-    batch_size=BATCH_SIZE,
-    shuffle=False,
-    num_workers=NUM_WORKERS,
-    pin_memory=True
-)
-
-# ==========================
-# CONFUSION MATRIX FUNCTION
-# ==========================
-
-def plot_confusion_matrix_figure(y_true, y_pred, output_path, class_names=("Non-Tornado", "Tornado")):
-    cm = confusion_matrix(y_true, y_pred)
-
-    plt.figure(figsize=(6, 5))
-    plt.imshow(cm, interpolation="nearest", cmap="Blues")
-    plt.title("Confusion Matrix")
-    plt.colorbar()
-
-    tick_marks = np.arange(len(class_names))
-    plt.xticks(tick_marks, class_names, rotation=45)
-    plt.yticks(tick_marks, class_names)
-
-    for i in range(cm.shape[0]):
-        for j in range(cm.shape[1]):
-            plt.text(
-                j, i, str(cm[i, j]),
-                horizontalalignment="center",
-                color="white" if cm[i, j] > cm.max() / 2 else "black"
-            )
-
-    plt.ylabel("True Label")
-    plt.xlabel("Predicted Label")
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
-    plt.show()
-    plt.close()
-
+def fmt_value(x):
+    if x is None:
+        return "None"
+    if isinstance(x, float) and np.isnan(x):
+        return "nan"
+    return f"{x:.4f}"
 
 # =========================================================
 # MAIN RUN FUNCTION
 # =========================================================
-def run_single_model(model_name):
-    print(f"\n{'='*70}")
+def run_single_model(model_name, cfg, train_df, val_df, test_df, pos_weight_value):
+    print(f"\n{'='*80}")
     print(f"Running model: {model_name}")
-    print(f"{'='*70}")
+    print(f"Config: {cfg}")
+    print(f"{'='*80}")
 
-    output_dir = os.path.join(BASE_OUTPUT_DIR, model_name)
+    run_name = make_run_name(cfg)
+    output_dir = os.path.join(BASE_OUTPUT_DIR, model_name, run_name)
     os.makedirs(output_dir, exist_ok=True)
+
+    train_loader, val_loader, test_loader = build_dataloaders(
+        train_df=train_df,
+        val_df=val_df,
+        test_df=test_df,
+        image_size=cfg["IMAGE_SIZE"],
+        batch_size=cfg["BATCH_SIZE"],
+        num_workers=NUM_WORKERS
+    )
 
     model = build_model(model_name).to(DEVICE)
 
@@ -517,13 +458,13 @@ def run_single_model(model_name):
 
     optimizer = optim.AdamW(
         model.parameters(),
-        lr=LR,
-        weight_decay=WEIGHT_DECAY
+        lr=cfg["LR"],
+        weight_decay=cfg["WEIGHT_DECAY"]
     )
 
     scheduler = optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
-        T_max=EPOCHS
+        T_max=cfg["EPOCHS"]
     )
 
     best_state = copy.deepcopy(model.state_dict())
@@ -536,7 +477,7 @@ def run_single_model(model_name):
 
     start_time = time.time()
 
-    for epoch in range(EPOCHS):
+    for epoch in range(cfg["EPOCHS"]):
         epoch_idx = epoch + 1
 
         train_metrics = train_one_epoch(
@@ -567,13 +508,12 @@ def run_single_model(model_name):
         history.append(row)
 
         print(
+            f"{model_name} | {run_name} | "
             f"Epoch {epoch_idx:03d} | "
             f"LR {optimizer.param_groups[0]['lr']:.6f} | "
             f"Train Loss {train_metrics['loss']:.4f} | "
-            f"Train Acc {train_metrics['accuracy']:.4f} | "
             f"Train F1 {train_metrics['f1']:.4f} | "
             f"Val Loss {val_metrics['loss']:.4f} | "
-            f"Val Acc {val_metrics['accuracy']:.4f} | "
             f"Val Precision {val_metrics['precision']:.4f} | "
             f"Val Recall {val_metrics['recall']:.4f} | "
             f"Val F1 {val_metrics['f1']:.4f}"
@@ -603,13 +543,6 @@ def run_single_model(model_name):
     history_df = pd.DataFrame(history)
     history_df.to_csv(os.path.join(output_dir, "training_log.csv"), index=False)
 
-    print("\nHistory preview:")
-    print(history_df[[
-        "epoch", "train_precision", "val_precision",
-        "train_recall", "val_recall",
-        "train_f1", "val_f1"
-    ]].tail())
-
     plot_training_curves(history_df, output_dir, model_name)
 
     model.load_state_dict(best_state)
@@ -628,6 +561,14 @@ def run_single_model(model_name):
 
     summary = {
         "model": model_name,
+        "run_name": run_name,
+        "image_size": cfg["IMAGE_SIZE"],
+        "batch_size": cfg["BATCH_SIZE"],
+        "epochs": cfg["EPOCHS"],
+        "lr": cfg["LR"],
+        "weight_decay": cfg["WEIGHT_DECAY"],
+        "threshold": THRESHOLD,
+        "seed": SEED,
         "best_epoch": best_epoch,
         "runtime_sec": elapsed,
 
@@ -660,32 +601,33 @@ def run_single_model(model_name):
 
     with open(os.path.join(output_dir, "final_summary.txt"), "w") as f:
         f.write(f"Model: {model_name}\n")
+        f.write(f"Run: {run_name}\n")
         f.write(f"Best Epoch: {best_epoch}\n")
         f.write(f"Runtime (sec): {elapsed:.2f}\n\n")
 
         f.write("Best Train Metrics:\n")
-        f.write(f"Loss: {summary['best_train_loss']:.4f}\n" if summary["best_train_loss"] is not None else "Loss: None\n")
-        f.write(f"Accuracy: {summary['best_train_accuracy']:.4f}\n" if summary["best_train_accuracy"] is not None else "Accuracy: None\n")
-        f.write(f"Precision: {summary['best_train_precision']:.4f}\n" if summary["best_train_precision"] is not None else "Precision: None\n")
-        f.write(f"Recall: {summary['best_train_recall']:.4f}\n" if summary["best_train_recall"] is not None else "Recall: None\n")
-        f.write(f"F1: {summary['best_train_f1']:.4f}\n" if summary["best_train_f1"] is not None else "F1: None\n")
-        f.write(f"ROC-AUC: {summary['best_train_roc_auc']:.4f}\n\n" if summary["best_train_roc_auc"] is not None else "ROC-AUC: None\n\n")
+        f.write(f"Loss: {fmt_value(summary['best_train_loss'])}\n")
+        f.write(f"Accuracy: {fmt_value(summary['best_train_accuracy'])}\n")
+        f.write(f"Precision: {fmt_value(summary['best_train_precision'])}\n")
+        f.write(f"Recall: {fmt_value(summary['best_train_recall'])}\n")
+        f.write(f"F1: {fmt_value(summary['best_train_f1'])}\n")
+        f.write(f"ROC-AUC: {fmt_value(summary['best_train_roc_auc'])}\n\n")
 
         f.write("Best Validation Metrics:\n")
-        f.write(f"Loss: {summary['best_val_loss']:.4f}\n" if summary["best_val_loss"] is not None else "Loss: None\n")
-        f.write(f"Accuracy: {summary['best_val_accuracy']:.4f}\n" if summary["best_val_accuracy"] is not None else "Accuracy: None\n")
-        f.write(f"Precision: {summary['best_val_precision']:.4f}\n" if summary["best_val_precision"] is not None else "Precision: None\n")
-        f.write(f"Recall: {summary['best_val_recall']:.4f}\n" if summary["best_val_recall"] is not None else "Recall: None\n")
-        f.write(f"F1: {summary['best_val_f1']:.4f}\n" if summary["best_val_f1"] is not None else "F1: None\n")
-        f.write(f"ROC-AUC: {summary['best_val_roc_auc']:.4f}\n\n" if summary["best_val_roc_auc"] is not None else "ROC-AUC: None\n\n")
+        f.write(f"Loss: {fmt_value(summary['best_val_loss'])}\n")
+        f.write(f"Accuracy: {fmt_value(summary['best_val_accuracy'])}\n")
+        f.write(f"Precision: {fmt_value(summary['best_val_precision'])}\n")
+        f.write(f"Recall: {fmt_value(summary['best_val_recall'])}\n")
+        f.write(f"F1: {fmt_value(summary['best_val_f1'])}\n")
+        f.write(f"ROC-AUC: {fmt_value(summary['best_val_roc_auc'])}\n\n")
 
         f.write("Test Metrics:\n")
-        f.write(f"Loss: {test_metrics['loss']:.4f}\n")
-        f.write(f"Accuracy: {test_metrics['accuracy']:.4f}\n")
-        f.write(f"Precision: {test_metrics['precision']:.4f}\n")
-        f.write(f"Recall: {test_metrics['recall']:.4f}\n")
-        f.write(f"F1: {test_metrics['f1']:.4f}\n")
-        f.write(f"ROC-AUC: {test_metrics['roc_auc']:.4f}\n")
+        f.write(f"Loss: {fmt_value(test_metrics['loss'])}\n")
+        f.write(f"Accuracy: {fmt_value(test_metrics['accuracy'])}\n")
+        f.write(f"Precision: {fmt_value(test_metrics['precision'])}\n")
+        f.write(f"Recall: {fmt_value(test_metrics['recall'])}\n")
+        f.write(f"F1: {fmt_value(test_metrics['f1'])}\n")
+        f.write(f"ROC-AUC: {fmt_value(test_metrics['roc_auc'])}\n")
         f.write(f"Confusion Matrix:\n{test_metrics['confusion_matrix']}\n\n")
 
         f.write("Classification Report:\n")
@@ -702,19 +644,71 @@ def run_single_model(model_name):
     return summary
 
 # =========================================================
-# RUN SELECTED MODELS
+# MAIN
 # =========================================================
-all_results = []
+def main():
+    train_df = pd.read_csv(TRAIN_CSV)
+    val_df = pd.read_csv(VAL_CSV)
+    test_df = pd.read_csv(TEST_CSV)
 
-for model_name in SELECTED_MODELS:
-    summary = run_single_model(model_name)
-    all_results.append(summary)
+    print("Using device:", DEVICE)
+    print("Train:", len(train_df))
+    print("Val:", len(val_df))
+    print("Test:", len(test_df))
 
-results_df = pd.DataFrame(all_results)
-results_df = results_df.sort_values(by=["test_f1", "test_roc_auc"], ascending=False)
-results_df.to_csv(os.path.join(BASE_OUTPUT_DIR, "all_model_results.csv"), index=False)
+    print("\nTrain label counts:")
+    print(train_df["binary_label"].value_counts().sort_index())
 
-print("\n" + "=" * 70)
-print("ALL RESULTS")
-print("=" * 70)
-print(results_df)
+    print("\nVal label counts:")
+    print(val_df["binary_label"].value_counts().sort_index())
+
+    print("\nTest label counts:")
+    print(test_df["binary_label"].value_counts().sort_index())
+
+    train_label_counts = train_df["binary_label"].value_counts().to_dict()
+    num_neg = train_label_counts.get(0, 0)
+    num_pos = train_label_counts.get(1, 0)
+    pos_weight_value = num_neg / num_pos if num_pos > 0 else 1.0
+
+    print("\nNegative:", num_neg)
+    print("Positive:", num_pos)
+    print("pos_weight:", pos_weight_value)
+
+    all_results = []
+
+    grid_keys = list(SEARCH_SPACE.keys())
+    grid_values = [SEARCH_SPACE[k] for k in grid_keys]
+
+    total_configs = len(list(itertools.product(*grid_values)))
+    print(f"\nTotal hyperparameter combinations: {total_configs}")
+    print(f"Total model runs: {total_configs * len(SELECTED_MODELS)}")
+
+    for values in itertools.product(*grid_values):
+        cfg = dict(zip(grid_keys, values))
+
+        for model_name in SELECTED_MODELS:
+            summary = run_single_model(
+                model_name=model_name,
+                cfg=cfg,
+                train_df=train_df,
+                val_df=val_df,
+                test_df=test_df,
+                pos_weight_value=pos_weight_value
+            )
+            all_results.append(summary)
+
+    results_df = pd.DataFrame(all_results)
+    results_df = results_df.sort_values(
+        by=["best_val_f1", "test_f1", "test_roc_auc"],
+        ascending=False
+    )
+    results_df.to_csv(os.path.join(BASE_OUTPUT_DIR, "grid_search_results.csv"), index=False)
+
+    print("\n" + "=" * 80)
+    print("GRID SEARCH RESULTS")
+    print("=" * 80)
+    print(results_df)
+
+
+if __name__ == "__main__":
+    main()
